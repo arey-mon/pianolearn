@@ -17,6 +17,7 @@ import FastRewindIcon from '@mui/icons-material/FastRewind';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
+import FastForwardIcon from '@mui/icons-material/FastForward';
 
 const COLORS = { R: '#3b82f6', L: '#f97316' } as const;
 const LEAD_IN = -4; // 4 temps de décompte
@@ -30,6 +31,24 @@ type Group = { start: number; end: number; hand: Hand; notes: Note[] };
 function hexA(hex: string, a: number) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+
+// Index de la mesure qui contient ce temps (recherche dichotomique)
+function measureIndexAt(measures: number[], beat: number) {
+  let lo = 0;
+  let hi = measures.length - 1;
+  let r = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (measures[mid] <= beat) {
+      r = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return r;
 }
 
 function keyLayout(lo: number, hi: number, width: number) {
@@ -83,6 +102,8 @@ export default function Player({ score }: { score: Score }) {
   const soundRef = useRef(true);
   const ppbRef = useRef(110);
   const octRef = useRef(false);
+    const measureRef = useRef(0);
+  const loopRef = useRef<{ start: number; end: number } | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [bpm, setBpm] = useState(score.bpm);
@@ -90,6 +111,9 @@ export default function Player({ score }: { score: Score }) {
   const [ppb, setPpb] = useState(110);
   const [showOct, setShowOct] = useState(false);
   const [ready, setReady] = useState(false);
+    const [measure, setMeasure] = useState(0);
+  const [loopOn, setLoopOn] = useState(false);
+  const [loopRange, setLoopRange] = useState<number[]>([0, Math.min(3, score.measures.length - 1)]);
 
   useEffect(() => { preloadPiano().then(() => setReady(true)).catch(() => setReady(false)); }, []);
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
@@ -108,6 +132,20 @@ export default function Player({ score }: { score: Score }) {
     if (!playingRef.current && beatRef.current > score.end) seek(LEAD_IN);
     playingRef.current = !playingRef.current;
     setPlaying(playingRef.current);
+  };
+
+
+  const goToMeasure = (i: number) => {
+    const idx = Math.max(0, Math.min(score.measures.length - 1, i));
+    seek(score.measures[idx]);
+  };
+
+  // Active ou met à jour la boucle ; replace la lecture dans la zone si besoin
+  const applyLoop = (on: boolean, range: number[]) => {
+    const start = score.measures[range[0]];
+    const end = score.measures[range[1] + 1] ?? score.end;
+    loopRef.current = on ? { start, end } : null;
+    if (on && (beatRef.current < start || beatRef.current >= end)) seek(start);
   };
 
   useEffect(() => {
@@ -165,6 +203,31 @@ export default function Player({ score }: { score: Score }) {
         ctx.lineTo(x, trackH);
         ctx.stroke();
       }
+
+
+      // Zone de boucle surlignée
+      const loop = loopRef.current;
+      if (loop) {
+        const x1 = cursorX + (loop.start - beat) * ppb;
+        const x2 = cursorX + (loop.end - beat) * ppb;
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.08)';
+        ctx.fillRect(x1, 0, x2 - x1, trackH);
+      }
+
+      // Barres de mesure numérotées
+      ctx.strokeStyle = '#475569';
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '600 11px system-ui';
+      ctx.textAlign = 'left';
+      score.measures.forEach((mb, i) => {
+        const x = cursorX + (mb - beat) * ppb;
+        if (x < -40 || x > W) return;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x) + 0.5, 0);
+        ctx.lineTo(Math.round(x) + 0.5, trackH);
+        ctx.stroke();
+        ctx.fillText(String(i + 1), x + 4, trackH - 6);
+      });
 
       // Cases de notes
       for (const g of groups) {
@@ -261,6 +324,12 @@ export default function Player({ score }: { score: Score }) {
       last = now;
       if (playingRef.current) {
         beatRef.current += (dt * bpmRef.current) / 60;
+                const lp = loopRef.current;
+        if (lp && beatRef.current >= lp.end) {
+          beatRef.current = lp.start;
+          const i = notes.findIndex((n) => n.start >= lp.start);
+          nextRef.current = i < 0 ? notes.length : i;
+        }
         const beat = beatRef.current;
         while (nextRef.current < notes.length && notes[nextRef.current].start <= beat) {
           const n = notes[nextRef.current++];
@@ -271,6 +340,11 @@ export default function Player({ score }: { score: Score }) {
           setPlaying(false);
         }
       }
+            const mi = measureIndexAt(score.measures, Math.max(0, beatRef.current));
+      if (mi !== measureRef.current) {
+        measureRef.current = mi;
+        setMeasure(mi);
+      }
       draw();
       raf = requestAnimationFrame(frame);
     };
@@ -279,27 +353,83 @@ export default function Player({ score }: { score: Score }) {
     return () => cancelAnimationFrame(raf);
   }, [score]);
 
-    return (
+      const lastMeasure = score.measures.length;
+
+  return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <canvas
         ref={canvasRef}
         onClick={toggle}
         style={{ flex: 1, minHeight: 0, width: '100%', display: 'block', touchAction: 'none' }}
       />
-      <Paper square elevation={3} sx={{ px: 1.5, py: 1 }}>
-        <Stack direction="row" sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
-          <Stack direction="row" sx={{ alignItems: 'center', gap: 0.5 }}>
-            <IconButton onClick={() => seek(LEAD_IN)} aria-label="Revenir au début">
-              <SkipPreviousIcon />
-            </IconButton>
-            <IconButton onClick={() => seek(Math.max(LEAD_IN, beatRef.current - 4))} aria-label="Reculer de 4 temps">
-              <FastRewindIcon />
-            </IconButton>
-            <Button variant="contained" onClick={toggle} startIcon={playing ? <PauseIcon /> : <PlayArrowIcon />}>
-              {playing ? 'Pause' : 'Lecture'}
-            </Button>
-          </Stack>
+      <Paper square elevation={3} sx={{ px: 1.5, py: 0.5 }}>
+        {/* Transport et position */}
+        <Stack direction="row" sx={{ alignItems: 'center', gap: 0.5 }}>
+          <IconButton
+            onClick={() => seek(loopOn ? score.measures[loopRange[0]] : LEAD_IN)}
+            aria-label="Revenir au début"
+          >
+            <SkipPreviousIcon />
+          </IconButton>
+          <IconButton onClick={() => goToMeasure(measure - 1)} aria-label="Mesure précédente">
+            <FastRewindIcon />
+          </IconButton>
+          <Button variant="contained" onClick={toggle} startIcon={playing ? <PauseIcon /> : <PlayArrowIcon />}>
+            {playing ? 'Pause' : 'Lecture'}
+          </Button>
+          <IconButton onClick={() => goToMeasure(measure + 1)} aria-label="Mesure suivante">
+            <FastForwardIcon />
+          </IconButton>
+          <Slider
+            size="small"
+            min={1}
+            max={lastMeasure}
+            value={measure + 1}
+            onChange={(_, v) => goToMeasure((v as number) - 1)}
+            aria-label="Position"
+            sx={{ flex: 1, mx: 1.5 }}
+          />
+          <Typography variant="body2" sx={{ minWidth: 76, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+            Mes. {measure + 1}/{lastMeasure}
+          </Typography>
+        </Stack>
 
+        {/* Boucle */}
+        <Stack direction="row" sx={{ alignItems: 'center', gap: 1.5 }}>
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={loopOn}
+                onChange={(e) => {
+                  setLoopOn(e.target.checked);
+                  applyLoop(e.target.checked, loopRange);
+                }}
+              />
+            }
+            label="Boucle"
+          />
+          <Slider
+            size="small"
+            min={1}
+            max={lastMeasure}
+            value={[loopRange[0] + 1, loopRange[1] + 1]}
+            disableSwap
+            onChange={(_, v) => {
+              const r = (v as number[]).map((x) => x - 1);
+              setLoopRange(r);
+              applyLoop(loopOn, r);
+            }}
+            getAriaLabel={(i) => (i === 0 ? 'Début de boucle' : 'Fin de boucle')}
+            sx={{ flex: 1, mx: 1.5 }}
+          />
+          <Typography variant="body2" sx={{ minWidth: 76, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+            Mes. {loopRange[0] + 1}–{loopRange[1] + 1}
+          </Typography>
+        </Stack>
+
+        {/* Réglages */}
+        <Stack direction="row" sx={{ alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
           <Stack direction="row" sx={{ alignItems: 'center', gap: 1.5, flex: 1, minWidth: 220 }}>
             <Typography variant="body2" sx={{ width: 64, fontVariantNumeric: 'tabular-nums' }}>
               {bpm} BPM
@@ -320,7 +450,6 @@ export default function Player({ score }: { score: Score }) {
               {Math.round((bpm / score.bpm) * 100)}%
             </Typography>
           </Stack>
-
           <Stack direction="row" sx={{ alignItems: 'center', gap: 1.5 }}>
             <Typography variant="body2">Espacement</Typography>
             <Slider
@@ -333,7 +462,6 @@ export default function Player({ score }: { score: Score }) {
               sx={{ width: 100 }}
             />
           </Stack>
-
           <FormControlLabel
             control={<Switch size="small" checked={showOct} onChange={(e) => setShowOct(e.target.checked)} />}
             label="Octaves"

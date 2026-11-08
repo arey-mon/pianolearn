@@ -3,16 +3,18 @@ import { Midi } from '@tonejs/midi';
 
 export type Hand = 'R' | 'L';
 export type Note = { midi: number; start: number; dur: number; hand: Hand; name: string };
-export type Score = { title: string; notes: Note[]; bpm: number; end: number };
-
+export type Score = { title: string; notes: Note[]; bpm: number; end: number; measures: number[] };
 const STEP: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const EN_CHROMA = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const txt = (el: Element, sel: string) => el.querySelector(sel)?.textContent?.trim() ?? '';
 
-function finish(title: string, notes: Note[], bpm: number): Score {
+function finish(title: string, notes: Note[], bpm: number, measures: number[] = [], beatsPerMeasure = 4): Score {
   notes.sort((a, b) => a.start - b.start || a.midi - b.midi);
   const end = notes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
-  return { title, notes, bpm: Math.round(bpm), end };
+  if (measures.length === 0) {
+    for (let b = 0; b < Math.max(end, 1); b += beatsPerMeasure) measures.push(b);
+  }
+  return { title, notes, bpm: Math.round(bpm), end, measures };
 }
 
 export function parseMusicXml(xml: string, fallbackTitle: string): Score {
@@ -23,6 +25,7 @@ export function parseMusicXml(xml: string, fallbackTitle: string): Score {
   const tempoEl = doc.querySelector('sound[tempo]');
   const bpm = tempoEl ? Number(tempoEl.getAttribute('tempo')) || 80 : 80;
   const notes: Note[] = [];
+    const measures: number[] = [];
 
   Array.from(doc.querySelectorAll('part')).forEach((part, pi) => {
     let divisions = 1;
@@ -32,6 +35,7 @@ export function parseMusicXml(xml: string, fallbackTitle: string): Score {
 
     for (const measure of Array.from(part.children)) {
       if (measure.tagName !== 'measure') continue;
+            if (pi === 0) measures.push(t);
       for (const el of Array.from(measure.children)) {
         if (el.tagName === 'attributes') {
           const d = txt(el, 'divisions');
@@ -77,7 +81,7 @@ export function parseMusicXml(xml: string, fallbackTitle: string): Score {
     }
   });
 
-  return finish(title, notes, bpm);
+    return finish(title, notes, bpm, measures);
 }
 
 export function parseMidi(buf: ArrayBuffer, fallbackTitle: string): Score {
@@ -93,7 +97,8 @@ export function parseMidi(buf: ArrayBuffer, fallbackTitle: string): Score {
             name: EN_CHROMA[n.midi % 12],
     }))
   );
-  return finish(midi.name || fallbackTitle, notes, midi.header.tempos[0]?.bpm ?? 80);
+    const ts = midi.header.timeSignatures[0]?.timeSignature ?? [4, 4];
+  return finish(midi.name || fallbackTitle, notes, midi.header.tempos[0]?.bpm ?? 80, [], (ts[0] * 4) / ts[1]);
 }
 
 export async function loadScoreFile(file: File): Promise<Score> {
