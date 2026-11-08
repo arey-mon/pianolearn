@@ -6,9 +6,7 @@ export type Note = { midi: number; start: number; dur: number; hand: Hand; name:
 export type Score = { title: string; notes: Note[]; bpm: number; end: number };
 
 const STEP: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-const FR_STEP: Record<string, string> = { C: 'Do', D: 'Ré', E: 'Mi', F: 'Fa', G: 'Sol', A: 'La', B: 'Si' };
-const FR_CHROMA = ['Do', 'Do#', 'Ré', 'Ré#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si'];
-
+const EN_CHROMA = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const txt = (el: Element, sel: string) => el.querySelector(sel)?.textContent?.trim() ?? '';
 
 function finish(title: string, notes: Note[], bpm: number): Score {
@@ -69,7 +67,8 @@ export function parseMusicXml(xml: string, fallbackTitle: string): Score {
             continue;
           }
 
-          const name = FR_STEP[step] + (alter > 0 ? '#'.repeat(alter) : alter < 0 ? 'b'.repeat(-alter) : '');
+                    const acc = txt(el, 'accidental');
+          const name = step + (alter > 0 ? '#'.repeat(alter) : alter < 0 ? 'b'.repeat(-alter) : acc === 'natural' ? '♮' : '');
           const n: Note = { midi, start, dur, hand, name };
           notes.push(n);
           if (ties.includes('start')) openTies.set(key, n);
@@ -91,7 +90,7 @@ export function parseMidi(buf: ArrayBuffer, fallbackTitle: string): Score {
       start: n.ticks / ppq,
       dur: n.durationTicks / ppq,
       hand: (tracks.length > 1 ? (i === 0 ? 'R' : 'L') : n.midi >= 60 ? 'R' : 'L') as Hand,
-      name: FR_CHROMA[n.midi % 12],
+            name: EN_CHROMA[n.midi % 12],
     }))
   );
   return finish(midi.name || fallbackTitle, notes, midi.header.tempos[0]?.bpm ?? 80);

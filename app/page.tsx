@@ -1,69 +1,173 @@
-import Image from "next/image";
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import Alert from '@mui/material/Alert';
+import AppBar from '@mui/material/AppBar';
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogTitle from '@mui/material/DialogTitle';
+import IconButton from '@mui/material/IconButton';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemText from '@mui/material/ListItemText';
+import Toolbar from '@mui/material/Toolbar';
+import Typography from '@mui/material/Typography';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
+import LibraryMusicIcon from '@mui/icons-material/LibraryMusic';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import Player from './components/Player';
+import { loadScoreFile, type Score } from '@/lib/score';
+import {
+  addToLibrary,
+  listLibrary,
+  openFromLibrary,
+  removeFromLibrary,
+  type LibraryItem,
+} from '@/lib/library';
 
 export default function Home() {
+  const [items, setItems] = useState<LibraryItem[]>([]);
+  const [score, setScore] = useState<Score | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<LibraryItem | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setItems(await listLibrary());
+    } catch {
+      setError('Bibliothèque inaccessible sur ce navigateur');
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Import d'un ou plusieurs fichiers : ajout à la bibliothèque, ouverture directe si un seul
+  const onFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    if (files.length === 0) return;
+    setError(null);
+
+    const failed: string[] = [];
+    let lastScore: Score | null = null;
+    for (const file of files) {
+      try {
+        const s = await loadScoreFile(file);
+        await addToLibrary(file, s.title, s.notes.length);
+        lastScore = s;
+      } catch {
+        failed.push(file.name);
+      }
+    }
+    await refresh();
+    if (failed.length) setError(`Import impossible : ${failed.join(', ')}`);
+    if (files.length === 1 && lastScore) setScore(lastScore);
+  };
+
+  const open = async (item: LibraryItem) => {
+    setError(null);
+    try {
+      const file = await openFromLibrary(item.id);
+      if (!file) throw new Error('Partition introuvable');
+      setScore(await loadScoreFile(file));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur de lecture');
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!toDelete) return;
+    await removeFromLibrary(toDelete.id);
+    setToDelete(null);
+    await refresh();
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100dvh' }}>
+      <AppBar position="static" color="transparent" elevation={0}>
+        <Toolbar variant="dense" sx={{ gap: 1 }}>
+          {score && (
+            <IconButton edge="start" onClick={() => setScore(null)} aria-label="Retour à la bibliothèque">
+              <ArrowBackIcon />
+            </IconButton>
+          )}
+          <Typography variant="subtitle1" noWrap sx={{ flex: 1, fontWeight: 600 }}>
+            {score?.title ?? 'Ma bibliothèque'}
+          </Typography>
+          {!score && (
+            <Button component="label" variant="outlined" size="small" startIcon={<UploadFileIcon />}>
+              Importer
+              <input type="file" hidden multiple onChange={onFiles} />
+            </Button>
+          )}
+        </Toolbar>
+      </AppBar>
+
+      {error && (
+        <Alert severity="error" onClose={() => setError(null)} sx={{ mx: 2, mb: 1 }}>
+          {error}
+        </Alert>
+      )}
+
+      {score ? (
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <Player key={`${score.title}-${score.notes.length}`} score={score} />
+        </Box>
+      ) : (
+        <Box sx={{ flex: 1, overflowY: 'auto' }}>
+          {items.length === 0 ? (
+            <Box sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>
+              <LibraryMusicIcon sx={{ fontSize: 48, mb: 1 }} />
+              <Typography>Aucune partition pour l’instant.</Typography>
+              <Typography variant="body2">
+                Importe un ou plusieurs fichiers MusicXML (.mxl, .musicxml) ou MIDI.
+              </Typography>
+            </Box>
+          ) : (
+            <List>
+              {items.map((item) => (
+                <ListItem
+                  key={item.id}
+                  disablePadding
+                  secondaryAction={
+                    <IconButton
+                      edge="end"
+                      aria-label={`Supprimer ${item.title}`}
+                      onClick={() => setToDelete(item)}
+                    >
+                      <DeleteOutlineIcon />
+                    </IconButton>
+                  }
+                >
+                  <ListItemButton onClick={() => open(item)}>
+                    <ListItemText
+                      primary={item.title}
+                      secondary={`${item.noteCount} notes · ajoutée le ${new Date(item.addedAt).toLocaleDateString('fr-FR')}`}
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </Box>
+      )}
+
+      <Dialog open={!!toDelete} onClose={() => setToDelete(null)}>
+        <DialogTitle>Supprimer « {toDelete?.title} » ?</DialogTitle>
+        <DialogActions>
+          <Button onClick={() => setToDelete(null)}>Annuler</Button>
+          <Button color="error" onClick={confirmDelete}>
+            Supprimer
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   );
 }
